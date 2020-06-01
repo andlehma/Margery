@@ -1,0 +1,32 @@
+DECISION MAKING
+===============
+if ball is above crossbar
+	wait
+else
+	if ball is in offensive half
+		if self in position to shoot
+			shoot
+		else
+			get in position
+	else
+		go_to_location(car, goal) # far post?
+		if ball is inside goal box
+			shoot
+		else
+			wait
+
+
+METHODS
+=======
+go_to_location(car, target)
+	aim car towards target (implement half-flip)
+	drive until distance to target is under some threshold
+	aim car at ball
+
+shoot(car, ball)
+	go_to_location(car, ball) # higher threshold than normal
+	jump and dodge forward quickly
+
+get_in_position(car, ball)
+	get line from center of goal to ball
+	go_to_location(car, nearest point on that line)
