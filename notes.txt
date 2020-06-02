@@ -1,0 +1,3 @@
+should have logic to align car goalside and then flip towards ball
+on defense, should check if she is closest to ball and go for ball if so
+on defense, should go for ball if it's within the goal box

@@ -22,8 +22,14 @@ class Margery(BaseAgent):
         self.pos = None
         self.yaw = None
 
+        self.next_dodge_time = 0
+        self.on_second_jump = False
+
         # CONSTANTS
-        self.POWERSLIDE_ANGLE = 3
+        self.POWERSLIDE_ANGLE = 3  # radians
+        self.TURN_THRESHOLD = 5  # degrees
+        self.DODGE_THRESHOLD = 500  # unreal units
+        self.DODGE_TIME = 0.2  # seconds
 
     # Helper Functions
     def aim(self, target: vec3):
@@ -41,9 +47,9 @@ class Margery(BaseAgent):
             angle_front_to_target) > self.POWERSLIDE_ANGLE
 
         # steer
-        if angle_front_to_target < math.radians(-10):
+        if angle_front_to_target < math.radians(-self.TURN_THRESHOLD):
             self.controller_state.steer = -1
-        elif angle_front_to_target > math.radians(10):
+        elif angle_front_to_target > math.radians(self.TURN_THRESHOLD):
             self.controller_state.steer = 1
         else:
             self.controller_state.steer = 0
@@ -79,21 +85,52 @@ class Margery(BaseAgent):
         self.action_display = "kickoff"
         self.go_to_location(vec3(0, 0, 0), 0, True)
 
+    def dodge(self, direction: vec3):
+        if time.time() > self.next_dodge_time:
+            angle_between_bot_and_target = math.atan2(
+                direction.y - self.pos.y, direction.x - self.pos.x)
+            angle_front_to_target = angle_between_bot_and_target - self.yaw
+            self.controller_state.pitch = math.sin(angle_front_to_target)
+            self.controller_state.steer = math.cos(angle_front_to_target)
+            if self.controller_state.pitch < 0:
+                self.controller_state.pitch = -1
+            else:
+                self.controller_state.pitch = 1
+            if self.controller_state.steer < 0:
+                self.controller_state.steer = -1
+            else:
+                self.controller_state.steer = 1
+
+            self.controller_state.jump = True
+
+            if self.on_second_jump:
+                self.on_second_jump = False
+            else:
+                self.on_second_jump = True
+                self.next_dodge_time = time.time() + self.DODGE_TIME
+
     def ballchase(self):
-        location = self.check_for_boost_detour(self.ball_pos)
-        if location == self.ball_pos:
-            self.action_display = "ballchasing"
+        dist_to_ball = self.pos.dist(self.ball_pos)
+        if dist_to_ball < self.DODGE_THRESHOLD:
+            # dodge into ball
+            self.dodge(self.ball_pos)
         else:
-            self.action_display = "boost > ball"
-        self.go_to_location(location, 0, False)
+            location = self.check_for_boost_detour(self.ball_pos)
+            if location == self.ball_pos:
+                self.action_display = "ballchasing"
+            else:
+                self.action_display = "boost > ball"
+            self.go_to_location(location, 0, False)
 
     def go_to_goal(self):
         location = self.check_for_boost_detour(self.defensive_goal)
+        threshold = 800
         if location == self.defensive_goal:
             self.action_display = "going to goal"
         else:
             self.action_display = "boost > goal"
-        self.go_to_location(location, 800, False)
+            threshold = 50
+        self.go_to_location(location, threshold, False)
 
     def boost_detour(self):
         self.action_display = "detouring for boost"
@@ -133,6 +170,9 @@ class Margery(BaseAgent):
                 self.action = self.ballchase
             else:
                 self.action = self.go_to_goal
+
+        # reset jump
+        self.controller_state.jump = False
 
         # perform the selected action
         self.action()
