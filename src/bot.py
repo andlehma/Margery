@@ -6,6 +6,7 @@ from rlbot.utils.structures.game_data_struct import GameTickPacket
 
 from utils.vec3 import vec3
 
+SIN45 = math.sin(0.785398)
 
 class Margery(BaseAgent):
     def __init__(self, name, team, index):
@@ -13,8 +14,10 @@ class Margery(BaseAgent):
         self.controller_state = SimpleControllerState()
         self.ball_pos = vec3(0, 0, 0)
         self.defensive_goal = vec3(0, -5120, 0)
+        self.offensive_goal = vec3(0, 5120, 0)
         if team == 1:
             self.defensive_goal = vec3(0, 5120, 0)
+            self.offensive_goal = vec3(0, -5120, 0)
 
         self.action = self.kickoff
         self.action_display = "none"
@@ -30,6 +33,7 @@ class Margery(BaseAgent):
         self.TURN_THRESHOLD = 5  # degrees
         self.DODGE_THRESHOLD = 500  # unreal units
         self.DODGE_TIME = 0.2  # seconds
+        self.BALL_FAR_AWAY_DISTANCE = 1500
 
     # Helper Functions
     def aim(self, target: vec3):
@@ -53,6 +57,8 @@ class Margery(BaseAgent):
             self.controller_state.steer = 1
         else:
             self.controller_state.steer = 0
+        
+        self.controller_state.pitch = 0
 
     def go_to_location(self, location: vec3, threshold: float, boost: bool):
         distance = self.pos.dist(location)
@@ -83,24 +89,26 @@ class Margery(BaseAgent):
     # Actions
     def kickoff(self):
         self.action_display = "kickoff"
-        self.go_to_location(vec3(0, 0, 0), 0, True)
+        self.ballchase()
+        # TODO: implement faster kickoffs
 
     def dodge(self, direction: vec3):
         if time.time() > self.next_dodge_time:
+            # get pitch and yaw values from angle to ball
             angle_between_bot_and_target = math.atan2(
                 direction.y - self.pos.y, direction.x - self.pos.x)
             angle_front_to_target = angle_between_bot_and_target - self.yaw
-            self.controller_state.pitch = math.sin(angle_front_to_target)
-            self.controller_state.steer = math.cos(angle_front_to_target)
-            if self.controller_state.pitch < 0:
-                self.controller_state.pitch = -1
-            else:
-                self.controller_state.pitch = 1
-            if self.controller_state.steer < 0:
-                self.controller_state.steer = -1
-            else:
-                self.controller_state.steer = 1
+            self.controller_state.pitch = -math.cos(angle_front_to_target)
+            self.controller_state.yaw = math.sin(angle_front_to_target)
 
+            # correct pitch values
+            if self.controller_state.pitch < -SIN45:
+                self.controller_state.pitch = -1
+            elif self.controller_state.pitch > SIN45:
+                self.controller_state.pitch = 1
+            else:
+                self.controller_state.pitch = 0
+            
             self.controller_state.jump = True
 
             if self.on_second_jump:
@@ -111,16 +119,31 @@ class Margery(BaseAgent):
 
     def ballchase(self):
         dist_to_ball = self.pos.dist(self.ball_pos)
+        # TODO: make sure we're goalside before flipping
         if dist_to_ball < self.DODGE_THRESHOLD:
             # dodge into ball
             self.dodge(self.ball_pos)
         else:
-            location = self.check_for_boost_detour(self.ball_pos)
-            if location == self.ball_pos:
+            # get goalside near the ball
+            boost = False
+            if dist_to_ball > self.BALL_FAR_AWAY_DISTANCE:
+                boost = True
+            ball_angle_to_goal = math.atan2(
+                self.offensive_goal.y - self.ball_pos.y,
+                self.offensive_goal.x - self.ball_pos.x)
+            ball_distance_to_goal = self.ball_pos.dist(self.offensive_goal)
+            dist_plus = ball_distance_to_goal + (self.DODGE_THRESHOLD / 2)
+            x = self.offensive_goal.x - \
+                (math.cos(ball_angle_to_goal) * dist_plus)
+            y = self.offensive_goal.y - \
+                (math.sin(ball_angle_to_goal) * dist_plus)
+            goalside_position = vec3(x, y, 0)
+            location = self.check_for_boost_detour(goalside_position)
+            if location == goalside_position:
                 self.action_display = "ballchasing"
             else:
                 self.action_display = "boost > ball"
-            self.go_to_location(location, 0, False)
+            self.go_to_location(location, 0, boost)
 
     def go_to_goal(self):
         location = self.check_for_boost_detour(self.defensive_goal)
@@ -132,19 +155,15 @@ class Margery(BaseAgent):
             threshold = 50
         self.go_to_location(location, threshold, False)
 
-    def boost_detour(self):
-        self.action_display = "detouring for boost"
-
     # Main Loop
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         # update information about Margery
         margery = packet.game_cars[self.index]
-        self.pos = vec3(margery.physics.location.x,
-                        margery.physics.location.y, margery.physics.location.z)
+        self.pos = vec3(margery.physics.location)
         self.yaw = margery.physics.rotation.yaw
 
         # update information about the ball
-        self.ball_pos = packet.game_ball.physics.location
+        self.ball_pos = vec3(packet.game_ball.physics.location)
         ball_is_in_offensive_half = True
         if self.team == 0:  # blue
             if self.ball_pos.y > -10:
@@ -171,7 +190,7 @@ class Margery(BaseAgent):
             else:
                 self.action = self.go_to_goal
 
-        # reset jump
+        # reset dodge
         self.controller_state.jump = False
 
         # perform the selected action
