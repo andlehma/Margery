@@ -9,6 +9,28 @@ from utils.vec3 import vec3
 SIN45 = math.sin(0.785398)
 
 
+def normalize_location(location: vec3):
+    """
+    take any location and normalize it to be within the arena
+    min/max values can and should be tweaked
+    walls are at +- 4196 (x) and +- 5120 (y)
+    """
+    arena_max_x = 4196 - 93  # wall x - ball radius
+    arena_min_x = -arena_max_x
+    arena_max_y = 5120 - 93  # wall y - ball radius
+    arena_min_y = -arena_max_y
+    output_location = vec3(location)
+    if location.x < arena_min_x:
+        output_location.x = arena_min_x
+    elif location.x > arena_max_x:
+        output_location.x = arena_max_x
+    if location.y < arena_min_y:
+        output_location.y = arena_min_y
+    elif location.y > arena_max_y:
+        output_location.y = arena_max_y
+    return output_location
+
+
 class Margery(BaseAgent):
     def __init__(self, name, team, index):
         super().__init__(name, team, index)
@@ -25,9 +47,12 @@ class Margery(BaseAgent):
 
         self.pos = None
         self.yaw = None
+        self.pitch = None
 
         self.next_dodge_time = 0
         self.on_second_jump = False
+
+        self.field_info = None
 
         # CONSTANTS
         self.POWERSLIDE_ANGLE = 3  # radians
@@ -38,6 +63,8 @@ class Margery(BaseAgent):
 
     # Helper Functions
     def aim(self, target: vec3):
+        """point left analog stick towards target"""
+
         angle_between_bot_and_target = math.atan2(
             target.y - self.pos.y, target.x - self.pos.x)
         angle_front_to_target = angle_between_bot_and_target - self.yaw
@@ -62,6 +89,8 @@ class Margery(BaseAgent):
         self.controller_state.pitch = 0
 
     def go_to_location(self, location: vec3, threshold: float, boost: bool):
+        """drive car to within threshold of location"""
+
         distance = self.pos.dist(location)
         if distance > threshold:
             # aim at location
@@ -75,6 +104,11 @@ class Margery(BaseAgent):
             self.controller_state.boost = False
 
     def check_for_boost_detour(self, location: vec3):
+        """
+        if any boost pad is within threshold of path to location,
+        return that boost pad's location, otherwise return orignial location
+        """
+
         dist_thresh = 100
         distance = self.pos.dist(location)
         for boost_pad in self.field_info.boost_pads:
@@ -86,27 +120,14 @@ class Margery(BaseAgent):
             if dist_diff < dist_thresh:
                 return boost_pad.location
         return location
-    
-    def normalize_location(self, location: vec3):
-        # these values can and should be tweaked
-        # walls are at +- 4196 (x) and +- 5120 (y)
-        arena_max_x = 4196 - 93 # wall x - ball radius
-        arena_min_x = -arena_max_x
-        arena_max_y = 5120 - 93 # wall y - ball radius
-        arena_min_y = -arena_max_y
-        output_location = vec3(location)
-        if location.x < arena_min_x:
-            output_location.x = arena_min_x
-        elif location.x > arena_max_x:
-            output_location.x = arena_max_x
-        if location.y < arena_min_y:
-            output_location.y = arena_min_y
-        elif location.y > arena_max_y:
-            output_location.y = arena_max_y
-        return output_location
 
     # Actions
     def kickoff(self):
+        """
+        performed when the ball is at (0, 0)
+        TODO: implement faster kickoffs
+        """
+
         self.action_display = "kickoff"
         dist_to_ball = self.pos.dist(self.ball_pos)
         if dist_to_ball > 500:
@@ -118,11 +139,12 @@ class Margery(BaseAgent):
                     self.check_for_boost_detour(vec3(0, 300, 0)), 0, True)
         else:
             self.ballchase()
-        # TODO: implement faster kickoffs
 
     def dodge(self, direction: vec3):
+        """dodge towards direction by jumping twice and aiming left stick"""
+
         if time.time() > self.next_dodge_time:
-            # get pitch and yaw values from angle to ball
+            # get pitch and yaw values from angle to direction
             angle_between_bot_and_target = math.atan2(
                 direction.y - self.pos.y, direction.x - self.pos.x)
             angle_front_to_target = angle_between_bot_and_target - self.yaw
@@ -146,6 +168,8 @@ class Margery(BaseAgent):
                 self.next_dodge_time = time.time() + self.DODGE_TIME
 
     def ballchase(self):
+        """get goalside of ball, aim at ball, and then dodge into ball"""
+
         # check if we are goalside
         goalside = False
         if self.team == 0:
@@ -186,10 +210,12 @@ class Margery(BaseAgent):
                 self.action_display = "ballchasing"
             else:
                 self.action_display = "boost > ball"
-            location = self.normalize_location(location)
+            location = normalize_location(location)
             self.go_to_location(location, 0, boost)
 
     def go_to_goal(self):
+        """go to the goal and wait"""
+
         location = self.check_for_boost_detour(self.defensive_goal)
         threshold = 800
         if location == self.defensive_goal:
@@ -197,11 +223,12 @@ class Margery(BaseAgent):
         else:
             self.action_display = "boost > goal"
             threshold = 50
-        location = self.normalize_location(location)
+        location = normalize_location(location)
         self.go_to_location(location, threshold, False)
 
-    # Main Loop
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
+        """main gameplay loop"""
+
         # update information about Margery
         margery = packet.game_cars[self.index]
         self.pos = vec3(margery.physics.location)
@@ -234,7 +261,7 @@ class Margery(BaseAgent):
             if ball_is_in_offensive_half:
                 self.action = self.ballchase
             else:
-                #self.action = self.go_to_goal
+                # self.action = self.go_to_goal
                 self.action = self.ballchase
 
         # reset dodge
@@ -251,6 +278,8 @@ class Margery(BaseAgent):
 
 
 def draw_debug(renderer, car, action_display):
+    """draw debugging information on screen"""
+
     renderer.begin_rendering()
     # print the action that the bot is taking
     renderer.draw_string_3d(car.physics.location, 2, 2,

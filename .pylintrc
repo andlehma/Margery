@@ -1,2 +1,3 @@
 [TYPECHECK]
 generated-members=QuickChats.*
+ignored-modules=rlbot
